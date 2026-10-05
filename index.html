@@ -135,6 +135,9 @@
   .hint{font-size:12px;color:var(--muted);margin-top:10px}
   .row.list{margin-top:16px}
   .row.list > *{flex:0 1 260px}
+  td.check,th.check{width:1%;text-align:center}
+  td.check input{width:auto;margin:0;cursor:pointer;accent-color:var(--pos)}
+  .passive{color:var(--pos)}
 </style>
 </head>
 <body>
@@ -175,7 +178,12 @@
           <option value="">No symbol</option>
         </select>
       </div>
+      <div>
+        <label for="rate">Monthly return, %</label>
+        <input id="rate" type="number" step="0.01" min="0" placeholder="0" inputmode="decimal">
+      </div>
     </div>
+    <div class="hint">Tick "Passive" on the sources that earn a return. Each ticked source adds its amount times this percent to your monthly income.</div>
   </section>
 
   <section class="card">
@@ -184,9 +192,11 @@
       <table>
         <thead>
           <tr>
+            <th class="check">Passive</th>
             <th>Source</th>
             <th class="num">Amount</th>
             <th class="num">Share</th>
+            <th class="num">Return</th>
             <th></th>
           </tr>
         </thead>
@@ -278,10 +288,11 @@
 
   var STORAGE_KEY = "budget-tracker-v1";
 
-  var state = { currency: "$", incomes: [], expenses: [], savedAt: null };
+  var state = { currency: "$", returnRate: 0, incomes: [], expenses: [], savedAt: null };
 
   var el = {
     currency:  document.getElementById("currency"),
+    rate:      document.getElementById("rate"),
     iForm:     document.getElementById("income-form"),
     iName:     document.getElementById("i-name"),
     iAmount:   document.getElementById("i-amount"),
@@ -345,11 +356,29 @@
     return btn;
   }
 
+  function passiveOf(item) {
+    return item.passive ? item.amount * state.returnRate / 100 : 0;
+  }
+
   function renderIncomes(income) {
     el.iRows.innerHTML = "";
 
     state.incomes.forEach(function (item) {
       var tr = document.createElement("tr");
+
+      var tdCheck = document.createElement("td");
+      tdCheck.className = "check";
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = item.passive;
+      box.title = "Count " + item.name + " as passive";
+      box.setAttribute("aria-label", "Count " + item.name + " as passive");
+      box.addEventListener("change", function () {
+        item.passive = box.checked;
+        render();
+      });
+      tdCheck.appendChild(box);
+      tr.appendChild(tdCheck);
 
       var tdName = document.createElement("td");
       tdName.textContent = item.name;
@@ -368,6 +397,11 @@
         : "—";
       tr.appendChild(tdShare);
 
+      var tdReturn = document.createElement("td");
+      tdReturn.className = "num passive";
+      tdReturn.textContent = item.passive ? "+" + money(passiveOf(item)) : "—";
+      tr.appendChild(tdReturn);
+
       var tdDel = document.createElement("td");
       tdDel.className = "num";
       tdDel.appendChild(removeButton("incomes", item));
@@ -381,14 +415,17 @@
   }
 
   function render() {
-    var income = sum(state.incomes);
+    var base = sum(state.incomes);
+    var passive = state.incomes.reduce(function (acc, e) { return acc + passiveOf(e); }, 0);
+    var income = base + passive;
     var total = sum(state.expenses);
     var remaining = income - total;
 
-    renderIncomes(income);
+    renderIncomes(base);
 
     el.sIncome.textContent = money(income);
-    el.sICount.textContent = state.incomes.length + (state.incomes.length === 1 ? " source" : " sources");
+    el.sICount.textContent = state.incomes.length + (state.incomes.length === 1 ? " source" : " sources") +
+      (passive > 0 ? ", incl. " + money(passive) + " passive" : "");
     el.sExpenses.textContent = money(total);
     el.sCount.textContent = state.expenses.length + (state.expenses.length === 1 ? " item" : " items");
     el.sRemain.textContent = money(remaining);
@@ -465,21 +502,26 @@
     }
   }
 
-  function cleanList(list, prefix) {
+  function cleanList(list, prefix, extra) {
     return (Array.isArray(list) ? list : [])
       .filter(function (e) { return e && typeof e === "object"; })
       .map(function (e, i) {
-        return {
+        var item = {
           id: e.id || (prefix + Date.now() + "-" + i),
           name: String(e.name == null ? "Untitled" : e.name).slice(0, 120),
           amount: Math.max(0, num(e.amount))
         };
+        if (extra) extra(item, e);
+        return item;
       });
   }
 
   function adopt(data) {
     state.currency = (data && typeof data.currency === "string") ? data.currency : "$";
-    state.incomes = cleanList(data && data.incomes, "i");
+    state.returnRate = Math.max(0, num(data && data.returnRate));
+    state.incomes = cleanList(data && data.incomes, "i", function (item, e) {
+      item.passive = e.passive === true;
+    });
     // Older saves kept a single "income" number instead of a list of sources.
     if (!state.incomes.length && data && num(data.income) > 0) {
       state.incomes = [{ id: "i" + Date.now(), name: "Income", amount: num(data.income) }];
@@ -488,6 +530,7 @@
     state.savedAt = (data && data.savedAt) || null;
 
     el.currency.value = state.currency;
+    el.rate.value = state.returnRate ? state.returnRate : "";
     render();
   }
 
@@ -512,10 +555,15 @@
     var amount = num(el.iAmount.value);
     if (!name || amount <= 0) return;
 
-    state.incomes.push({ id: newId(), name: name, amount: amount });
+    state.incomes.push({ id: newId(), name: name, amount: amount, passive: false });
 
     el.iForm.reset();
     el.iName.focus();
+    render();
+  });
+
+  el.rate.addEventListener("input", function () {
+    state.returnRate = Math.max(0, num(el.rate.value));
     render();
   });
 
@@ -572,7 +620,7 @@
   el.reset.addEventListener("click", function () {
     if (!confirm("Clear every income source and expense? This cannot be undone.")) return;
     try { localStorage.removeItem(STORAGE_KEY); } catch (err) {}
-    adopt({ currency: el.currency.value, incomes: [], expenses: [] });
+    adopt({ currency: el.currency.value, returnRate: 0, incomes: [], expenses: [] });
     setSavedLabel("Not saved yet", false);
   });
 
