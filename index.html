@@ -135,9 +135,11 @@
   .hint{font-size:12px;color:var(--muted);margin-top:10px}
   .row.list{margin-top:16px}
   .row.list > *{flex:0 1 260px}
-  td.check,th.check{width:1%;text-align:center}
-  td.check input{width:auto;margin:0;cursor:pointer;accent-color:var(--pos)}
   .passive{color:var(--pos)}
+  td input.rate{width:84px;padding:5px 8px;font-size:14px;text-align:right}
+  .p-total{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .p-total .v{font-size:24px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--pos)}
+  .p-total .note{font-size:12px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -160,6 +162,10 @@
           <label for="i-amount">Amount</label>
           <input id="i-amount" type="number" step="0.01" min="0" placeholder="0.00" inputmode="decimal" required>
         </div>
+        <div>
+          <label for="i-rate">Monthly return, %</label>
+          <input id="i-rate" type="number" step="0.01" min="0" placeholder="0" inputmode="decimal">
+        </div>
         <div class="btn-cell">
           <button type="submit">Add</button>
         </div>
@@ -178,12 +184,8 @@
           <option value="">No symbol</option>
         </select>
       </div>
-      <div>
-        <label for="rate">Monthly return, %</label>
-        <input id="rate" type="number" step="0.01" min="0" placeholder="0" inputmode="decimal">
-      </div>
     </div>
-    <div class="hint">Tick "Passive" on the sources that earn a return. Each ticked source adds its amount times this percent to your monthly income.</div>
+    <div class="hint">Leave the return at 0 for ordinary income. For a deposit or investment, enter its monthly return and the passive income is the amount times that percent.</div>
   </section>
 
   <section class="card">
@@ -192,11 +194,11 @@
       <table>
         <thead>
           <tr>
-            <th class="check">Passive</th>
             <th>Source</th>
             <th class="num">Amount</th>
             <th class="num">Share</th>
-            <th class="num">Return</th>
+            <th class="num">Return, %</th>
+            <th class="num">Passive / mo</th>
             <th></th>
           </tr>
         </thead>
@@ -204,6 +206,28 @@
       </table>
     </div>
     <div class="empty" id="i-empty">No income sources yet. Add your first one above.</div>
+  </section>
+
+  <section class="card">
+    <h2>Passive income</h2>
+    <div class="p-total">
+      <div class="v" id="p-total">0.00</div>
+      <div class="note" id="p-note">per month</div>
+    </div>
+    <div class="table-scroll" id="p-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th class="num">Amount</th>
+            <th class="num">Return, %</th>
+            <th class="num">Per month</th>
+          </tr>
+        </thead>
+        <tbody id="p-rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="p-empty">No passive income yet. Set a monthly return on a source above.</div>
   </section>
 
   <section class="card">
@@ -288,17 +312,22 @@
 
   var STORAGE_KEY = "budget-tracker-v1";
 
-  var state = { currency: "$", returnRate: 0, incomes: [], expenses: [], savedAt: null };
+  var state = { currency: "$", incomes: [], expenses: [], savedAt: null };
 
   var el = {
     currency:  document.getElementById("currency"),
-    rate:      document.getElementById("rate"),
     iForm:     document.getElementById("income-form"),
     iName:     document.getElementById("i-name"),
     iAmount:   document.getElementById("i-amount"),
+    iRate:     document.getElementById("i-rate"),
     iRows:     document.getElementById("i-rows"),
     iEmpty:    document.getElementById("i-empty"),
     iTableWrap:document.getElementById("i-table-wrap"),
+    pTotal:    document.getElementById("p-total"),
+    pNote:     document.getElementById("p-note"),
+    pRows:     document.getElementById("p-rows"),
+    pEmpty:    document.getElementById("p-empty"),
+    pTableWrap:document.getElementById("p-table-wrap"),
     sIncome:   document.getElementById("s-income"),
     sICount:   document.getElementById("s-i-count"),
     sExpenses: document.getElementById("s-expenses"),
@@ -357,7 +386,19 @@
   }
 
   function passiveOf(item) {
-    return item.passive ? item.amount * state.returnRate / 100 : 0;
+    return item.amount * item.rate / 100;
+  }
+
+  function cell(tr, text, className) {
+    var td = document.createElement("td");
+    if (className) td.className = className;
+    td.textContent = text;
+    tr.appendChild(td);
+    return td;
+  }
+
+  function rateText(rate) {
+    return rate.toLocaleString("en-US", { maximumFractionDigits: 2 }) + "%";
   }
 
   function renderIncomes(income) {
@@ -365,20 +406,6 @@
 
     state.incomes.forEach(function (item) {
       var tr = document.createElement("tr");
-
-      var tdCheck = document.createElement("td");
-      tdCheck.className = "check";
-      var box = document.createElement("input");
-      box.type = "checkbox";
-      box.checked = item.passive;
-      box.title = "Count " + item.name + " as passive";
-      box.setAttribute("aria-label", "Count " + item.name + " as passive");
-      box.addEventListener("change", function () {
-        item.passive = box.checked;
-        render();
-      });
-      tdCheck.appendChild(box);
-      tr.appendChild(tdCheck);
 
       var tdName = document.createElement("td");
       tdName.textContent = item.name;
@@ -397,10 +424,32 @@
         : "—";
       tr.appendChild(tdShare);
 
-      var tdReturn = document.createElement("td");
-      tdReturn.className = "num passive";
-      tdReturn.textContent = item.passive ? "+" + money(passiveOf(item)) : "—";
-      tr.appendChild(tdReturn);
+      var tdRate = document.createElement("td");
+      tdRate.className = "num";
+      var rate = document.createElement("input");
+      rate.type = "number";
+      rate.step = "0.01";
+      rate.min = "0";
+      rate.placeholder = "0";
+      rate.inputMode = "decimal";
+      rate.className = "rate";
+      rate.value = item.rate ? item.rate : "";
+      rate.setAttribute("aria-label", "Monthly return for " + item.name + ", %");
+      tdRate.appendChild(rate);
+      tr.appendChild(tdRate);
+
+      var tdPassive = cell(tr, "", "num passive");
+      function showPassive() {
+        tdPassive.textContent = item.rate > 0 ? "+" + money(passiveOf(item)) : "—";
+      }
+      showPassive();
+
+      // Update in place so the field keeps focus while typing.
+      rate.addEventListener("input", function () {
+        item.rate = Math.max(0, num(rate.value));
+        showPassive();
+        renderTotals();
+      });
 
       var tdDel = document.createElement("td");
       tdDel.className = "num";
@@ -414,14 +463,40 @@
     el.iTableWrap.style.display = state.incomes.length ? "block" : "none";
   }
 
+  function renderPassive() {
+    var earning = state.incomes.filter(function (e) { return passiveOf(e) > 0; });
+    var total = earning.reduce(function (acc, e) { return acc + passiveOf(e); }, 0);
+
+    el.pTotal.textContent = money(total);
+    el.pNote.textContent = "per month from " + earning.length +
+      (earning.length === 1 ? " source" : " sources");
+
+    el.pRows.innerHTML = "";
+    earning.forEach(function (item) {
+      var tr = document.createElement("tr");
+      cell(tr, item.name);
+      cell(tr, money(item.amount), "num");
+      cell(tr, rateText(item.rate), "num share");
+      cell(tr, "+" + money(passiveOf(item)), "num passive");
+      el.pRows.appendChild(tr);
+    });
+
+    el.pEmpty.style.display = earning.length ? "none" : "block";
+    el.pTableWrap.style.display = earning.length ? "block" : "none";
+    return total;
+  }
+
   function render() {
+    renderIncomes(sum(state.incomes));
+    renderTotals();
+  }
+
+  function renderTotals() {
     var base = sum(state.incomes);
-    var passive = state.incomes.reduce(function (acc, e) { return acc + passiveOf(e); }, 0);
+    var passive = renderPassive();
     var income = base + passive;
     var total = sum(state.expenses);
     var remaining = income - total;
-
-    renderIncomes(base);
 
     el.sIncome.textContent = money(income);
     el.sICount.textContent = state.incomes.length + (state.incomes.length === 1 ? " source" : " sources") +
@@ -518,19 +593,19 @@
 
   function adopt(data) {
     state.currency = (data && typeof data.currency === "string") ? data.currency : "$";
-    state.returnRate = Math.max(0, num(data && data.returnRate));
+    // Earlier saves had one shared rate plus a "passive" flag on each source.
+    var sharedRate = Math.max(0, num(data && data.returnRate));
     state.incomes = cleanList(data && data.incomes, "i", function (item, e) {
-      item.passive = e.passive === true;
+      item.rate = e.rate != null ? Math.max(0, num(e.rate)) : (e.passive === true ? sharedRate : 0);
     });
     // Older saves kept a single "income" number instead of a list of sources.
     if (!state.incomes.length && data && num(data.income) > 0) {
-      state.incomes = [{ id: "i" + Date.now(), name: "Income", amount: num(data.income) }];
+      state.incomes = [{ id: "i" + Date.now(), name: "Income", amount: num(data.income), rate: 0 }];
     }
     state.expenses = cleanList(data && data.expenses, "e");
     state.savedAt = (data && data.savedAt) || null;
 
     el.currency.value = state.currency;
-    el.rate.value = state.returnRate ? state.returnRate : "";
     render();
   }
 
@@ -555,15 +630,10 @@
     var amount = num(el.iAmount.value);
     if (!name || amount <= 0) return;
 
-    state.incomes.push({ id: newId(), name: name, amount: amount, passive: false });
+    state.incomes.push({ id: newId(), name: name, amount: amount, rate: Math.max(0, num(el.iRate.value)) });
 
     el.iForm.reset();
     el.iName.focus();
-    render();
-  });
-
-  el.rate.addEventListener("input", function () {
-    state.returnRate = Math.max(0, num(el.rate.value));
     render();
   });
 
@@ -620,7 +690,7 @@
   el.reset.addEventListener("click", function () {
     if (!confirm("Clear every income source and expense? This cannot be undone.")) return;
     try { localStorage.removeItem(STORAGE_KEY); } catch (err) {}
-    adopt({ currency: el.currency.value, returnRate: 0, incomes: [], expenses: [] });
+    adopt({ currency: el.currency.value, incomes: [], expenses: [] });
     setSavedLabel("Not saved yet", false);
   });
 
