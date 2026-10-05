@@ -118,6 +118,7 @@
   td{padding:10px;border-bottom:1px solid var(--line);vertical-align:middle}
   tr:last-child td{border-bottom:none}
   .tag{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:500}
+  .tag.pos{background:var(--pos-soft);color:var(--pos)}
   .share{color:var(--muted);font-size:12px}
   .icon{
     background:transparent;border:1px solid transparent;color:var(--muted);
@@ -132,6 +133,8 @@
   .saved.flash{color:var(--pos)}
   .actions{display:flex;gap:8px;flex-wrap:wrap}
   .hint{font-size:12px;color:var(--muted);margin-top:10px}
+  .row.list{margin-top:16px}
+  .row.list > *{flex:0 1 260px}
 </style>
 </head>
 <body>
@@ -139,16 +142,27 @@
 
   <header>
     <h1>Budget Tracker</h1>
-    <div class="sub">Enter your income, add expense items, and watch what is left.</div>
+    <div class="sub">Add your income sources and expense items, and watch what is left.</div>
   </header>
 
   <section class="card">
-    <h2>Income</h2>
-    <div class="row">
-      <div class="grow">
-        <label for="income">Monthly income</label>
-        <input id="income" type="number" step="0.01" min="0" placeholder="0.00" inputmode="decimal">
+    <h2>Add income</h2>
+    <form id="income-form">
+      <div class="row">
+        <div class="grow">
+          <label for="i-name">Source</label>
+          <input id="i-name" type="text" placeholder="Salary, freelance, rent received…" required>
+        </div>
+        <div>
+          <label for="i-amount">Amount</label>
+          <input id="i-amount" type="number" step="0.01" min="0" placeholder="0.00" inputmode="decimal" required>
+        </div>
+        <div class="btn-cell">
+          <button type="submit">Add</button>
+        </div>
       </div>
+    </form>
+    <div class="row list">
       <div>
         <label for="currency">Currency</label>
         <select id="currency">
@@ -165,11 +179,30 @@
   </section>
 
   <section class="card">
+    <h2>Income sources</h2>
+    <div class="table-scroll" id="i-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th class="num">Amount</th>
+            <th class="num">Share</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="i-rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="i-empty">No income sources yet. Add your first one above.</div>
+  </section>
+
+  <section class="card">
     <h2>Summary</h2>
     <div class="summary">
       <div class="stat">
         <div class="k">Income</div>
         <div class="v" id="s-income">0.00</div>
+        <div class="note" id="s-i-count">0 sources</div>
       </div>
       <div class="stat">
         <div class="k">Total expenses</div>
@@ -245,12 +278,18 @@
 
   var STORAGE_KEY = "budget-tracker-v1";
 
-  var state = { income: 0, currency: "$", expenses: [], savedAt: null };
+  var state = { currency: "$", incomes: [], expenses: [], savedAt: null };
 
   var el = {
-    income:    document.getElementById("income"),
     currency:  document.getElementById("currency"),
+    iForm:     document.getElementById("income-form"),
+    iName:     document.getElementById("i-name"),
+    iAmount:   document.getElementById("i-amount"),
+    iRows:     document.getElementById("i-rows"),
+    iEmpty:    document.getElementById("i-empty"),
+    iTableWrap:document.getElementById("i-table-wrap"),
     sIncome:   document.getElementById("s-income"),
+    sICount:   document.getElementById("s-i-count"),
     sExpenses: document.getElementById("s-expenses"),
     sCount:    document.getElementById("s-count"),
     sRemain:   document.getElementById("s-remaining"),
@@ -284,34 +323,91 @@
     return isFinite(n) ? n : 0;
   }
 
-  function totalExpenses() {
-    return state.expenses.reduce(function (sum, e) { return sum + e.amount; }, 0);
+  function sum(list) {
+    return list.reduce(function (acc, e) { return acc + e.amount; }, 0);
+  }
+
+  function newId() {
+    return String(Date.now()) + "-" + Math.random().toString(36).slice(2, 7);
+  }
+
+  function removeButton(key, item) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "icon";
+    btn.title = "Remove " + item.name;
+    btn.setAttribute("aria-label", "Remove " + item.name);
+    btn.textContent = "✕";
+    btn.addEventListener("click", function () {
+      state[key] = state[key].filter(function (e) { return e.id !== item.id; });
+      render();
+    });
+    return btn;
+  }
+
+  function renderIncomes(income) {
+    el.iRows.innerHTML = "";
+
+    state.incomes.forEach(function (item) {
+      var tr = document.createElement("tr");
+
+      var tdName = document.createElement("td");
+      tdName.textContent = item.name;
+      tr.appendChild(tdName);
+
+      var tdAmount = document.createElement("td");
+      tdAmount.className = "num";
+      tdAmount.innerHTML = '<span class="tag pos"></span>';
+      tdAmount.firstChild.textContent = money(item.amount);
+      tr.appendChild(tdAmount);
+
+      var tdShare = document.createElement("td");
+      tdShare.className = "num share";
+      tdShare.textContent = income > 0
+        ? (item.amount / income * 100).toFixed(1) + "%"
+        : "—";
+      tr.appendChild(tdShare);
+
+      var tdDel = document.createElement("td");
+      tdDel.className = "num";
+      tdDel.appendChild(removeButton("incomes", item));
+      tr.appendChild(tdDel);
+
+      el.iRows.appendChild(tr);
+    });
+
+    el.iEmpty.style.display = state.incomes.length ? "none" : "block";
+    el.iTableWrap.style.display = state.incomes.length ? "block" : "none";
   }
 
   function render() {
-    var total = totalExpenses();
-    var remaining = state.income - total;
+    var income = sum(state.incomes);
+    var total = sum(state.expenses);
+    var remaining = income - total;
 
-    el.sIncome.textContent = money(state.income);
+    renderIncomes(income);
+
+    el.sIncome.textContent = money(income);
+    el.sICount.textContent = state.incomes.length + (state.incomes.length === 1 ? " source" : " sources");
     el.sExpenses.textContent = money(total);
     el.sCount.textContent = state.expenses.length + (state.expenses.length === 1 ? " item" : " items");
     el.sRemain.textContent = money(remaining);
     el.sRemain.className = "v " + (remaining < 0 ? "over" : "ok");
 
-    if (state.income <= 0) {
+    if (income <= 0) {
       el.sNote.textContent = "Add your income to begin";
     } else if (remaining < 0) {
       el.sNote.textContent = "Over budget by " + money(Math.abs(remaining));
     } else {
-      el.sNote.textContent = Math.round(remaining / state.income * 100) + "% of income left";
+      el.sNote.textContent = Math.round(remaining / income * 100) + "% of income left";
     }
 
-    var pct = state.income > 0 ? Math.min(total / state.income * 100, 100) : 0;
+    var pct = income > 0 ? Math.min(total / income * 100, 100) : 0;
     el.sBar.style.width = pct + "%";
     el.sBar.className = remaining < 0 ? "over" : "";
 
     el.rows.innerHTML = "";
-    var running = state.income;
+    var running = income;
 
     state.expenses.forEach(function (item) {
       running -= item.amount;
@@ -330,8 +426,8 @@
 
       var tdShare = document.createElement("td");
       tdShare.className = "num share";
-      tdShare.textContent = state.income > 0
-        ? (item.amount / state.income * 100).toFixed(1) + "%"
+      tdShare.textContent = income > 0
+        ? (item.amount / income * 100).toFixed(1) + "%"
         : "—";
       tr.appendChild(tdShare);
 
@@ -343,17 +439,7 @@
 
       var tdDel = document.createElement("td");
       tdDel.className = "num";
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "icon";
-      btn.title = "Remove " + item.name;
-      btn.setAttribute("aria-label", "Remove " + item.name);
-      btn.textContent = "✕";
-      btn.addEventListener("click", function () {
-        state.expenses = state.expenses.filter(function (e) { return e.id !== item.id; });
-        render();
-      });
-      tdDel.appendChild(btn);
+      tdDel.appendChild(removeButton("expenses", item));
       tr.appendChild(tdDel);
 
       el.rows.appendChild(tr);
@@ -379,21 +465,28 @@
     }
   }
 
-  function adopt(data) {
-    state.income = num(data && data.income);
-    state.currency = (data && typeof data.currency === "string") ? data.currency : "$";
-    state.expenses = (data && Array.isArray(data.expenses) ? data.expenses : [])
+  function cleanList(list, prefix) {
+    return (Array.isArray(list) ? list : [])
       .filter(function (e) { return e && typeof e === "object"; })
       .map(function (e, i) {
         return {
-          id: e.id || (Date.now() + "-" + i),
+          id: e.id || (prefix + Date.now() + "-" + i),
           name: String(e.name == null ? "Untitled" : e.name).slice(0, 120),
           amount: Math.max(0, num(e.amount))
         };
       });
+  }
+
+  function adopt(data) {
+    state.currency = (data && typeof data.currency === "string") ? data.currency : "$";
+    state.incomes = cleanList(data && data.incomes, "i");
+    // Older saves kept a single "income" number instead of a list of sources.
+    if (!state.incomes.length && data && num(data.income) > 0) {
+      state.incomes = [{ id: "i" + Date.now(), name: "Income", amount: num(data.income) }];
+    }
+    state.expenses = cleanList(data && data.expenses, "e");
     state.savedAt = (data && data.savedAt) || null;
 
-    el.income.value = state.income ? state.income : "";
     el.currency.value = state.currency;
     render();
   }
@@ -413,8 +506,16 @@
     }
   }
 
-  el.income.addEventListener("input", function () {
-    state.income = Math.max(0, num(el.income.value));
+  el.iForm.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var name = el.iName.value.trim();
+    var amount = num(el.iAmount.value);
+    if (!name || amount <= 0) return;
+
+    state.incomes.push({ id: newId(), name: name, amount: amount });
+
+    el.iForm.reset();
+    el.iName.focus();
     render();
   });
 
@@ -429,11 +530,7 @@
     var amount = num(el.eAmount.value);
     if (!name || amount <= 0) return;
 
-    state.expenses.push({
-      id: String(Date.now()) + "-" + Math.random().toString(36).slice(2, 7),
-      name: name,
-      amount: amount
-    });
+    state.expenses.push({ id: newId(), name: name, amount: amount });
 
     el.form.reset();
     el.eName.focus();
@@ -473,9 +570,9 @@
   });
 
   el.reset.addEventListener("click", function () {
-    if (!confirm("Clear the income and every expense? This cannot be undone.")) return;
+    if (!confirm("Clear every income source and expense? This cannot be undone.")) return;
     try { localStorage.removeItem(STORAGE_KEY); } catch (err) {}
-    adopt({ income: 0, currency: el.currency.value, expenses: [] });
+    adopt({ currency: el.currency.value, incomes: [], expenses: [] });
     setSavedLabel("Not saved yet", false);
   });
 
