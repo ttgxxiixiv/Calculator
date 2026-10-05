@@ -163,7 +163,7 @@
           <input id="i-amount" type="number" step="0.01" min="0" placeholder="0.00" inputmode="decimal" required>
         </div>
         <div>
-          <label for="i-rate">Monthly return, %</label>
+          <label for="i-rate">Annual return, %</label>
           <input id="i-rate" type="number" step="0.01" min="0" placeholder="0" inputmode="decimal">
         </div>
         <div class="btn-cell">
@@ -185,7 +185,7 @@
         </select>
       </div>
     </div>
-    <div class="hint">Leave the return at 0 for ordinary income. For a deposit or investment, enter its monthly return and the passive income is the amount times that percent.</div>
+    <div class="hint">Leave the return at 0 for ordinary income. For a deposit or investment, enter its annual return: the passive income per month is the amount times that percent, divided by 12.</div>
   </section>
 
   <section class="card">
@@ -197,7 +197,7 @@
             <th>Source</th>
             <th class="num">Amount</th>
             <th class="num">Share</th>
-            <th class="num">Return, %</th>
+            <th class="num">Annual, %</th>
             <th class="num">Passive / mo</th>
             <th></th>
           </tr>
@@ -220,14 +220,14 @@
           <tr>
             <th>Source</th>
             <th class="num">Amount</th>
-            <th class="num">Return, %</th>
+            <th class="num">Annual, %</th>
             <th class="num">Per month</th>
           </tr>
         </thead>
         <tbody id="p-rows"></tbody>
       </table>
     </div>
-    <div class="empty" id="p-empty">No passive income yet. Set a monthly return on a source above.</div>
+    <div class="empty" id="p-empty">No passive income yet. Set an annual return on a source above.</div>
   </section>
 
   <section class="card">
@@ -386,7 +386,8 @@
   }
 
   function passiveOf(item) {
-    return item.amount * item.rate / 100;
+    // The rate is annual, so spread it over 12 months.
+    return item.amount * item.rate / 100 / 12;
   }
 
   function cell(tr, text, className) {
@@ -434,7 +435,7 @@
       rate.inputMode = "decimal";
       rate.className = "rate";
       rate.value = item.rate ? item.rate : "";
-      rate.setAttribute("aria-label", "Monthly return for " + item.name + ", %");
+      rate.setAttribute("aria-label", "Annual return for " + item.name + ", %");
       tdRate.appendChild(rate);
       tr.appendChild(tdRate);
 
