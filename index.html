@@ -125,6 +125,12 @@
     padding:4px 8px;border-radius:6px;font-size:14px;line-height:1;
   }
   .icon:hover{background:var(--neg-soft);color:var(--neg);border-color:var(--line)}
+  .icon.edit:hover{background:var(--accent-soft);color:var(--accent)}
+  td.acts{white-space:nowrap;width:1%}
+  tr.editing td{background:var(--accent-soft)}
+  .edit-form .btn-cell{gap:8px}
+  /* Keep the form within the screen even when the table itself scrolls sideways. */
+  .edit-form{position:sticky;left:10px;max-width:calc(100vw - 90px)}
   .empty{text-align:center;color:var(--muted);padding:26px 10px;font-size:14px}
   .table-scroll{overflow-x:auto}
 
@@ -385,6 +391,122 @@
     return btn;
   }
 
+  // The row currently open for editing: { key: "incomes" | "expenses", id }.
+  var editing = null;
+
+  function isEditing(key, item) {
+    return !!editing && editing.key === key && editing.id === item.id;
+  }
+
+  function actionsCell(tr, key, item) {
+    var td = document.createElement("td");
+    td.className = "num acts";
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "icon edit";
+    btn.title = "Edit " + item.name;
+    btn.setAttribute("aria-label", "Edit " + item.name);
+    btn.textContent = "✎";
+    btn.addEventListener("click", function () {
+      editing = { key: key, id: item.id };
+      render();
+    });
+    td.appendChild(btn);
+    td.appendChild(removeButton(key, item));
+    tr.appendChild(td);
+  }
+
+  function field(labelText, input) {
+    var wrap = document.createElement("div");
+    var label = document.createElement("label");
+    label.textContent = labelText;
+    label.appendChild(input);
+    input.style.marginTop = "5px";
+    wrap.appendChild(label);
+    return wrap;
+  }
+
+  function numberInput(value, placeholder) {
+    var input = document.createElement("input");
+    input.type = "number";
+    input.step = "0.01";
+    input.min = "0";
+    input.placeholder = placeholder;
+    input.inputMode = "decimal";
+    input.value = value ? value : "";
+    return input;
+  }
+
+  // Replaces a table row with a small form for changing that item.
+  function editRow(key, item, cols) {
+    var tr = document.createElement("tr");
+    tr.className = "editing";
+    var td = document.createElement("td");
+    td.colSpan = cols;
+
+    var form = document.createElement("form");
+    form.className = "edit-form";
+    var row = document.createElement("div");
+    row.className = "row";
+
+    var name = document.createElement("input");
+    name.type = "text";
+    name.required = true;
+    name.value = item.name;
+    var nameField = field(key === "incomes" ? "Source" : "Item", name);
+    nameField.className = "grow";
+    row.appendChild(nameField);
+
+    var amount = numberInput(item.amount, "0.00");
+    amount.required = true;
+    row.appendChild(field("Amount", amount));
+
+    var rate = null;
+    if (key === "incomes") {
+      rate = numberInput(item.rate, "0");
+      row.appendChild(field("Annual return, %", rate));
+    }
+
+    var btns = document.createElement("div");
+    btns.className = "btn-cell";
+    var saveBtn = document.createElement("button");
+    saveBtn.type = "submit";
+    saveBtn.textContent = "Save";
+    var cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "ghost";
+    cancelBtn.textContent = "Cancel";
+    btns.appendChild(saveBtn);
+    btns.appendChild(cancelBtn);
+    row.appendChild(btns);
+
+    function close() {
+      editing = null;
+      render();
+    }
+
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var newName = name.value.trim();
+      var newAmount = num(amount.value);
+      if (!newName || newAmount <= 0) return;
+      item.name = newName.slice(0, 120);
+      item.amount = newAmount;
+      if (rate) item.rate = Math.max(0, num(rate.value));
+      close();
+    });
+    cancelBtn.addEventListener("click", close);
+    form.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") close();
+    });
+
+    form.appendChild(row);
+    td.appendChild(form);
+    tr.appendChild(td);
+    setTimeout(function () { name.focus(); }, 0);
+    return tr;
+  }
+
   function passiveOf(item) {
     // The rate is annual, so spread it over 12 months.
     return item.amount * item.rate / 100 / 12;
@@ -406,6 +528,10 @@
     el.iRows.innerHTML = "";
 
     state.incomes.forEach(function (item) {
+      if (isEditing("incomes", item)) {
+        el.iRows.appendChild(editRow("incomes", item, 6));
+        return;
+      }
       var tr = document.createElement("tr");
 
       var tdName = document.createElement("td");
@@ -452,10 +578,7 @@
         renderTotals();
       });
 
-      var tdDel = document.createElement("td");
-      tdDel.className = "num";
-      tdDel.appendChild(removeButton("incomes", item));
-      tr.appendChild(tdDel);
+      actionsCell(tr, "incomes", item);
 
       el.iRows.appendChild(tr);
     });
@@ -525,6 +648,10 @@
     state.expenses.forEach(function (item) {
       running -= item.amount;
 
+      if (isEditing("expenses", item)) {
+        el.rows.appendChild(editRow("expenses", item, 5));
+        return;
+      }
       var tr = document.createElement("tr");
 
       var tdName = document.createElement("td");
@@ -550,10 +677,7 @@
       tdLeft.style.color = running < 0 ? "var(--neg)" : "";
       tr.appendChild(tdLeft);
 
-      var tdDel = document.createElement("td");
-      tdDel.className = "num";
-      tdDel.appendChild(removeButton("expenses", item));
-      tr.appendChild(tdDel);
+      actionsCell(tr, "expenses", item);
 
       el.rows.appendChild(tr);
     });
@@ -593,6 +717,7 @@
   }
 
   function adopt(data) {
+    editing = null;
     state.currency = (data && typeof data.currency === "string") ? data.currency : "$";
     // Earlier saves had one shared rate plus a "passive" flag on each source.
     var sharedRate = Math.max(0, num(data && data.returnRate));
